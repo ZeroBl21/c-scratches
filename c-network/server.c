@@ -110,7 +110,7 @@ int main(int argc, char **argv) {
         return 1;
       }
       close(client_fd);
-      return 0;
+      exit(0);
     }
 
     close(client_fd);
