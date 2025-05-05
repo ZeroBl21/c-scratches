@@ -75,8 +75,7 @@ int setup_server_socket() {
   int sockfd;
   struct addrinfo *p;
   for (p = serv_info; p != NULL; p = p->ai_next) {
-    sockfd = socket(serv_info->ai_family, serv_info->ai_socktype,
-                    serv_info->ai_protocol);
+    sockfd = socket(p->ai_family, p->ai_socktype, p->ai_protocol);
     if (sockfd < 0) {
       perror("SERVER ERROR: socket fd");
       continue;
@@ -86,12 +85,14 @@ int setup_server_socket() {
     err = setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes));
     if (err < 0) {
       perror("SERVER ERROR: setsockopt");
+      close(sockfd);
       return -1;
     }
 
-    err = bind(sockfd, serv_info->ai_addr, serv_info->ai_addrlen);
+    err = bind(sockfd, p->ai_addr, p->ai_addrlen);
     if (err < 0) {
       perror("SERVER ERROR: socket bind error");
+      close(sockfd);
       continue;
     }
 
@@ -107,6 +108,7 @@ int setup_server_socket() {
 
   if (listen(sockfd, BACKLOG) < 0) {
     perror("SERVER ERROR: socket listen");
+    close(sockfd);
     return -1;
   }
 
@@ -121,7 +123,7 @@ void handle_client(int client_fd, struct sockaddr_storage their_addr) {
 
   printf("SERVER INFO: got connection from %s\n", client_info);
 
-  char *msg = "There is a message bro\n";
+  char *msg = "There is a message bro";
   int bytes_sent = send(client_fd, msg, strlen(msg), 0);
   if (bytes_sent < 0) {
     perror("SERVER ERROR: socket (send)ing message error");
