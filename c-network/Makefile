@@ -16,8 +16,14 @@ run: build
 build/server: server.c
 	@$(CC) server.c -o ./bin/server $(C_FLAGS) $(C_FLAGS)
 
+build/client: client.c
+	@$(CC) client.c -o ./bin/client $(C_FLAGS) $(C_FLAGS)
+
 run/server: build/server
 	./bin/server 
+
+run/client: build/client
+	./bin/client $(HOST)
 
 clean:
 	rm -f ./bin/
