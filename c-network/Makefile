@@ -19,11 +19,23 @@ build/server: server.c
 build/client: client.c
 	@$(CC) client.c -o ./bin/client $(C_FLAGS) $(C_FLAGS)
 
+build/client-udp: client-udp.c
+	@$(CC) client-udp.c -o ./bin/client-udp $(C_FLAGS) $(C_FLAGS)
+
+build/server-udp: server-udp.c
+	@$(CC) server-udp.c -o ./bin/server-udp $(C_FLAGS) $(C_FLAGS)
+
 run/server: build/server
 	./bin/server 
 
 run/client: build/client
 	./bin/client $(HOST)
+
+run/server-udp: build/server-udp
+	./bin/server-udp 
+
+run/client-udp: build/client-udp
+	./bin/client-udp $(HOST) $(MSG)
 
 clean:
 	rm -f ./bin/
