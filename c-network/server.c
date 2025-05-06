@@ -103,6 +103,7 @@ int setup_server_socket() {
 
   if (p == NULL) {
     fprintf(stderr, "SERVER ERROR: failed to bind");
+    close(sockfd);
     return -1;
   }
 

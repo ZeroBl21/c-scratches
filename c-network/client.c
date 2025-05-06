@@ -33,6 +33,8 @@ int main(int argc, char **argv) {
   int num_bytes = recv(sockfd, buf, MAX_DATA_SIZE - 1, 0);
   if (num_bytes < 0) {
     perror("CLIENT ERROR: socket recv");
+    close(sockfd);
+    return 1;
   }
   buf[num_bytes] = '\0';
 
