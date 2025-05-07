@@ -12,8 +12,39 @@
 
 #include "server.h"
 
-void handle_new_connection(int listener, struct pollfd **pfds, int *fd_count,
-                           int *fd_size);
+typedef struct {
+  struct pollfd *items;
+  size_t count;
+  size_t capacity;
+} Clients;
+
+#define da_reserve(da, expected_capacity)                                      \
+  do {                                                                         \
+    if ((expected_capacity) > (da)->capacity) {                                \
+      if ((da)->capacity == 0) {                                               \
+        (da)->capacity = 256;                                                  \
+      }                                                                        \
+      while ((expected_capacity) > (da)->capacity) {                           \
+        (da)->capacity *= 2;                                                   \
+      }                                                                        \
+      (da)->items =                                                            \
+          realloc((da)->items, (da)->capacity * sizeof(*(da)->items));         \
+    }                                                                          \
+  } while (0)
+
+#define da_append(da, item)                                                    \
+  do {                                                                         \
+    da_reserve((da), (da)->count + 1);                                         \
+    (da)->items[(da)->count++] = (item);                                       \
+  } while (0)
+
+#define da_remove_unordered(da, i)                                             \
+  do {                                                                         \
+    size_t j = (i);                                                            \
+    (da)->items[j] = (da)->items[--(da)->count];                               \
+  } while (0)
+
+void handle_new_connection(int listener, Clients *pfds);
 void append_to_pfds(struct pollfd *pfds[], int new_fd, int *fd_count,
                     int *fd_size);
 void del_from_pfds(struct pollfd pfds[], int i, int *fd_count);
@@ -27,41 +58,37 @@ int main(int argc, char **argv) {
     return 1;
   }
 
-  int fd_count = 0;
-  int fd_size = 5;
-  struct pollfd *pfds = malloc(sizeof *pfds * fd_size);
-  pfds[0].fd = listener;
-  pfds[0].events = POLLIN;
-  fd_count = 1;
+  Clients clients = {0};
+  da_append(&clients, ((struct pollfd){.fd = listener, .events = POLLIN}));
 
-  char buf[256];
   for (;;) {
-    int poll_count = poll(pfds, fd_count, -1);
+    int poll_count = poll(clients.items, clients.count, -1);
     if (poll_count == -1) {
       perror("SERVER ERROR: poll");
       return -1;
     }
 
-    for (int i = 0; i < fd_count; i++) {
-      if (!(pfds[i].revents & (POLLIN | POLLHUP))) {
+    for (int i = 0; i < clients.count; i++) {
+      if (!(clients.items[i].revents & (POLLIN | POLLHUP))) {
         continue;
       }
 
-      if (pfds[i].fd == listener) {
-        handle_new_connection(listener, &pfds, &fd_count, &fd_size);
+      if (clients.items[i].fd == listener) {
+        handle_new_connection(listener, &clients);
         continue;
       }
 
-      int sender_fd = pfds[i].fd;
-      int nbytes = recv(pfds[i].fd, buf, sizeof(buf), 0);
+      int sender_fd = clients.items[i].fd;
+      char buf[256];
+      int nbytes = recv(clients.items[i].fd, buf, sizeof(buf), 0);
       if (nbytes <= 0) {
         if (nbytes < 0) {
           perror("SERVER ERROR: error recv");
         } else {
           printf("SERVER INFO: socket %d hung up\n", sender_fd);
         }
-        close(pfds[i].fd);
-        del_from_pfds(pfds, i, &fd_count);
+        close(clients.items[i].fd);
+        da_remove_unordered(&clients, i);
         i--;
         continue;
       }
@@ -69,8 +96,8 @@ int main(int argc, char **argv) {
       char message[512];
       int msg_len = snprintf(message, sizeof message, "[%d]: %.*s", sender_fd,
                              nbytes, buf);
-      for (int j = 0; j < fd_count; j++) {
-        int dest_fd = pfds[j].fd;
+      for (int j = 0; j < clients.count; j++) {
+        int dest_fd = clients.items[j].fd;
         if (dest_fd != listener && dest_fd != sender_fd) {
           if (send(dest_fd, message, msg_len, 0) == -1) {
             perror("send");
@@ -83,8 +110,7 @@ int main(int argc, char **argv) {
   return EXIT_SUCCESS;
 }
 
-void handle_new_connection(int listener, struct pollfd **pfds, int *fd_count,
-                           int *fd_size) {
+void handle_new_connection(int listener, Clients *pfds) {
   struct sockaddr_storage remote_addr;
   socklen_t addr_len = sizeof remote_addr;
 
@@ -94,7 +120,7 @@ void handle_new_connection(int listener, struct pollfd **pfds, int *fd_count,
     return;
   }
 
-  append_to_pfds(pfds, new_fd, fd_count, fd_size);
+  da_append(pfds, ((struct pollfd){.fd = new_fd, POLLIN}));
 
   char remote_ip[INET6_ADDRSTRLEN];
   const char *client_info = inet_ntop(
@@ -104,21 +130,6 @@ void handle_new_connection(int listener, struct pollfd **pfds, int *fd_count,
          new_fd);
 
   return;
-}
-
-void append_to_pfds(struct pollfd *pfds[], int new_fd, int *fd_count,
-                    int *fd_size) {
-  if (*fd_count >= *fd_size) {
-    *fd_size *= 2;
-
-    pfds = realloc(*pfds, sizeof(**pfds) * (*fd_size));
-  }
-
-  (*pfds)[*fd_count].fd = new_fd;
-  (*pfds)[*fd_count].events = POLLIN;
-  (*pfds)[*fd_count].revents = 0;
-
-  (*fd_count)++;
 }
 
 void del_from_pfds(struct pollfd pfds[], int i, int *fd_count) {
