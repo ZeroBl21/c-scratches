@@ -12,12 +12,6 @@
 
 #include "server.h"
 
-typedef struct {
-  struct pollfd *items;
-  size_t count;
-  size_t capacity;
-} Clients;
-
 #define da_reserve(da, expected_capacity)                                      \
   do {                                                                         \
     if ((expected_capacity) > (da)->capacity) {                                \
@@ -44,9 +38,15 @@ typedef struct {
     (da)->items[j] = (da)->items[--(da)->count];                               \
   } while (0)
 
-void handle_new_connection(int listener, Clients *pfds);
-void handle_broadcast(int listener, Clients clients, int sender_fd, char *buf,
-                      int nbytes);
+typedef struct {
+  struct pollfd *items;
+  size_t count;
+  size_t capacity;
+} Clients;
+
+static void handle_new_connection(int listener, Clients *clients);
+static void handle_broadcast(int listener, Clients *clients, int sender_fd,
+                             char *buf, int nbytes);
 
 int main(int argc, char **argv) {
   puts("Starting chat...");
@@ -92,14 +92,14 @@ int main(int argc, char **argv) {
         continue;
       }
 
-      handle_broadcast(listener, clients, sender_fd, buf, nbytes);
+      handle_broadcast(listener, &clients, sender_fd, buf, nbytes);
     }
   }
 
   return EXIT_SUCCESS;
 }
 
-void handle_new_connection(int listener, Clients *pfds) {
+static void handle_new_connection(int listener, Clients *clients) {
   struct sockaddr_storage remote_addr;
   socklen_t addr_len = sizeof remote_addr;
 
@@ -109,7 +109,7 @@ void handle_new_connection(int listener, Clients *pfds) {
     return;
   }
 
-  da_append(pfds, ((struct pollfd){.fd = new_fd, POLLIN}));
+  da_append(clients, ((struct pollfd){.fd = new_fd, POLLIN}));
 
   char remote_ip[INET6_ADDRSTRLEN];
   const char *client_info = inet_ntop(
@@ -121,13 +121,13 @@ void handle_new_connection(int listener, Clients *pfds) {
   return;
 }
 
-void handle_broadcast(int listener, Clients clients, int sender_fd, char *buf,
-                      int nbytes) {
+static void handle_broadcast(int listener, Clients *clients, int sender_fd,
+                             char *buf, int nbytes) {
   char message[512];
   int msg_len =
       snprintf(message, sizeof message, "[%d]: %.*s", sender_fd, nbytes, buf);
-  for (int j = 0; j < clients.count; j++) {
-    int dest_fd = clients.items[j].fd;
+  for (int j = 0; j < clients->count; j++) {
+    int dest_fd = clients->items[j].fd;
     if (dest_fd != listener && dest_fd != sender_fd) {
       if (send(dest_fd, message, msg_len, 0) == -1) {
         perror("send");
