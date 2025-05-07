@@ -45,9 +45,6 @@ typedef struct {
   } while (0)
 
 void handle_new_connection(int listener, Clients *pfds);
-void append_to_pfds(struct pollfd *pfds[], int new_fd, int *fd_count,
-                    int *fd_size);
-void del_from_pfds(struct pollfd pfds[], int i, int *fd_count);
 
 int main(int argc, char **argv) {
   puts("Starting chat...");
@@ -130,10 +127,4 @@ void handle_new_connection(int listener, Clients *pfds) {
          new_fd);
 
   return;
-}
-
-void del_from_pfds(struct pollfd pfds[], int i, int *fd_count) {
-  pfds[i] = pfds[*fd_count - 1];
-
-  (*fd_count)--;
 }
