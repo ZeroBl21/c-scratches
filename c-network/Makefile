@@ -8,7 +8,7 @@ CC = clang
 # 	@$(CC) $(SRC) -o $(OUT) $(C_FLAGS) $(C_FLAGS)
 
 build: main.c
-	@$(CC) main.c -o ./bin/a $(C_FLAGS) $(C_FLAGS)
+	@$(CC) main.c server.c -o ./bin/a $(C_FLAGS) $(C_FLAGS)
 
 run: build
 	./bin/a $(FILE)
