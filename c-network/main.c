@@ -45,6 +45,8 @@ typedef struct {
   } while (0)
 
 void handle_new_connection(int listener, Clients *pfds);
+void handle_broadcast(int listener, Clients clients, int sender_fd, char *buf,
+                      int nbytes);
 
 int main(int argc, char **argv) {
   puts("Starting chat...");
@@ -90,17 +92,7 @@ int main(int argc, char **argv) {
         continue;
       }
 
-      char message[512];
-      int msg_len = snprintf(message, sizeof message, "[%d]: %.*s", sender_fd,
-                             nbytes, buf);
-      for (int j = 0; j < clients.count; j++) {
-        int dest_fd = clients.items[j].fd;
-        if (dest_fd != listener && dest_fd != sender_fd) {
-          if (send(dest_fd, message, msg_len, 0) == -1) {
-            perror("send");
-          }
-        }
-      }
+      handle_broadcast(listener, clients, sender_fd, buf, nbytes);
     }
   }
 
@@ -127,4 +119,19 @@ void handle_new_connection(int listener, Clients *pfds) {
          new_fd);
 
   return;
+}
+
+void handle_broadcast(int listener, Clients clients, int sender_fd, char *buf,
+                      int nbytes) {
+  char message[512];
+  int msg_len =
+      snprintf(message, sizeof message, "[%d]: %.*s", sender_fd, nbytes, buf);
+  for (int j = 0; j < clients.count; j++) {
+    int dest_fd = clients.items[j].fd;
+    if (dest_fd != listener && dest_fd != sender_fd) {
+      if (send(dest_fd, message, msg_len, 0) == -1) {
+        perror("send");
+      }
+    }
+  }
 }
