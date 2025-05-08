@@ -3,11 +3,7 @@
 
 #include <netinet/in.h>
 
-extern const int BACKLOG;
-extern const char *HOST;
-extern const char *PORT;
-
 void *get_in_addr(struct sockaddr *sa);
-int setup_server_socket();
+int setup_server_socket(char *host, char *port, int backlog);
 
 #endif // SERVER_H

@@ -48,10 +48,14 @@ static void handle_new_connection(int listener, Clients *clients);
 static void handle_broadcast(int listener, Clients *clients, int sender_fd,
                              char *buf, int nbytes);
 
+char *HOST = NULL;
+char *PORT = "9034";
+int BACKLOG = 10;
+
 int main(int argc, char **argv) {
   puts("Starting chat...");
 
-  int listener = setup_server_socket();
+  int listener = setup_server_socket(HOST, PORT, BACKLOG);
   if (listener == -1) {
     fprintf(stderr, "SERVER ERROR: error getting listening socket\n");
     return 1;

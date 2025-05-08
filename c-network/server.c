@@ -10,11 +10,7 @@
 
 #include "server.h"
 
-const int BACKLOG = 10;
-const char *HOST = NULL;
-const char *PORT = "3490";
-
-int setup_server_socket() {
+int setup_server_socket(char* host, char* port, int backlog) {
   struct addrinfo hints, *serv_info;
 
   memset(&hints, 0, sizeof(hints));
@@ -22,7 +18,7 @@ int setup_server_socket() {
   hints.ai_socktype = SOCK_STREAM;
   hints.ai_flags = AI_PASSIVE;
 
-  int err = getaddrinfo(HOST, PORT, &hints, &serv_info);
+  int err = getaddrinfo(host, port, &hints, &serv_info);
   if (err != 0) {
     fprintf(stderr, "ERROR: getaddrinfo error: %s", gai_strerror(err));
     return -1;
@@ -63,7 +59,7 @@ int setup_server_socket() {
     return -1;
   }
 
-  if (listen(sockfd, BACKLOG) < 0) {
+  if (listen(sockfd, backlog) < 0) {
     perror("SERVER ERROR: socket listen");
     close(sockfd);
     return -1;
