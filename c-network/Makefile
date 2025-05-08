@@ -25,6 +25,9 @@ build/client-udp: client-udp.c
 build/server-udp: server-udp.c
 	@$(CC) server-udp.c -o ./bin/server-udp $(C_FLAGS) $(C_FLAGS)
 
+build/server-chat: server-chat.c
+	@$(CC) server-chat.c server.c -o ./bin/server-chat $(C_FLAGS) $(C_FLAGS)
+
 run/server: build/server
 	./bin/server 
 
@@ -36,6 +39,9 @@ run/server-udp: build/server-udp
 
 run/client-udp: build/client-udp
 	./bin/client-udp $(HOST) $(MSG)
+
+run/server-chat: build/server-chat
+	./bin/server-chat
 
 clean:
 	rm -f ./bin/
