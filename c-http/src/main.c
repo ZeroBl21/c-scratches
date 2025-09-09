@@ -307,7 +307,8 @@ int main(void) {
 
     // TODO: Maybe check the method and Transfer-Encoding: chunked
     // Check if Content-Length doesn't exceed the buffer
-    // Content-Length Size discusion https://stackoverflow.com/questions/2880722/can-http-post-be-limitless#55998160
+    // Content-Length Size discussion 
+    // https://stackoverflow.com/questions/2880722/can-http-post-be-limitless#55998160
     String_View *content_lenght =
         upsert(&headers_map, sv_from_cstr("content-length"));
     if (content_lenght->data) {
@@ -315,6 +316,7 @@ int main(void) {
       TODO("read exactly Content-Length bytes");
     }
 
+    // TODO: Check Golang as a reference API
     send_response(client_fd, "HTTP/1.0", 200, "OK", "text/plain",
                   "Hello, world!");
 
