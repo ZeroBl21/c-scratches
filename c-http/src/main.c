@@ -151,6 +151,97 @@ bool sv_end_with(String_View sv, const char *cstr) {
   return false;
 }
 
+bool sv_starts_with(String_View sv, String_View expected_prefix) {
+  if (expected_prefix.count <= sv.count) {
+    String_View actual_prefix = sv_from_parts(sv.data, expected_prefix.count);
+    return sv_eq(expected_prefix, actual_prefix);
+  }
+
+  return false;
+}
+
+void sb_path_clean(String_Builder *sb, String_View path) {
+  sb->count = 0;
+
+  if (path.count == 0) {
+    sb_append_cstr(sb, ".");
+    return;
+  }
+
+  bool rooted = (path.data[0] == '/');
+  size_t read_idx = 0;
+
+  if (rooted) {
+    da_append(sb, '/');
+    read_idx = 1;
+  }
+
+  while (read_idx < path.count) {
+    if (path.data[read_idx] == '/') {
+      read_idx++; // ignore repeated slashes
+    } else if (path.data[read_idx] == '.' &&
+               (read_idx + 1 == path.count || path.data[read_idx + 1] == '/')) {
+      read_idx++; // ignore "."
+    } else if (path.data[read_idx] == '.' && read_idx + 1 < path.count &&
+               path.data[read_idx + 1] == '.' &&
+               (read_idx + 2 == path.count || path.data[read_idx + 2] == '/')) {
+      read_idx += 2;
+      if (sb->count > 1) {
+        // backtrack to the previous '/'
+        sb->count--;
+        while (sb->count > 0 && sb->items[sb->count - 1] != '/') {
+          sb->count--;
+        }
+      } else if (!rooted) {
+        // cannot backtrack, append ".."
+        if (sb->count > 0 && sb->items[sb->count - 1] != '/') {
+          da_append(sb, '/');
+        }
+        sb_append_cstr(sb, "..");
+      }
+    } else {
+      // normal path segment
+      if (sb->count > 0 && sb->items[sb->count - 1] != '/') {
+        da_append(sb, '/');
+      }
+      while (read_idx < path.count && path.data[read_idx] != '/') {
+        da_append(sb, path.data[read_idx]);
+        read_idx++;
+      }
+    }
+  }
+
+  if (sb->count == 0) {
+    da_append_many(sb, ".", 1);
+  }
+}
+
+void sb_path_clean_absolute(String_Builder *sb, String_View path) {
+  if (path.count == 0) {
+    sb->count = 0;
+    sb_append_cstr(sb, "/");
+    return;
+  }
+
+  String_Builder tmp = {0};
+  if (path.data[0] != '/') {
+    sb_append_cstr(sb, "/");
+  }
+  da_append_many(&tmp, path.data, path.count);
+
+  sb_path_clean(sb, sb_to_sv(tmp));
+
+  // Restore '/' at the end
+  if (path.data[path.count - 1] == '/' &&
+      !(sb->count == 1 && sb->items[0] == '/')) {
+    if (!(path.count == sb->count + 1 && sv_eq(path, sb_to_sv(*sb)))) {
+      da_append(sb, '/');
+    }
+  }
+
+  sb_free(tmp);
+}
+
 void send_response(int client_fd, const char *version, int status,
                    const char *reason, const char *content_type,
                    const char *body) {
@@ -188,7 +279,7 @@ void send_response(int client_fd, const char *version, int status,
 
   send(client_fd, sb.items, sb.count, 0);
 
-  free(sb.items);
+  sb_free(sb);
 }
 
 void respond_400(int client_fd, const char *version) {
@@ -401,9 +492,12 @@ int main(void) {
       }
 
       String_Builder file = {0};
-
       String_Builder full_path = {0};
+
       sb_appendf(&full_path, "./public" SV_Fmt, SV_Arg(path));
+      sb_path_clean(&full_path, sb_to_sv(full_path));
+      sb_append_null(&full_path);
+
       if (!read_entire_file(full_path.items, &file)) {
         respond_404(client_fd, "HTTP/1.0");
         goto close_connection;
@@ -415,6 +509,10 @@ int main(void) {
       }
 
       send_response(client_fd, "HTTP/1.0", 200, "OK", filetype, file.items);
+
+      sb_free(full_path);
+      sb_free(file);
+
       goto close_connection;
     }
 
