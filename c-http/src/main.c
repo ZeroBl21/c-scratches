@@ -2,6 +2,8 @@
 
 #include <arpa/inet.h>
 #include <ctype.h>
+#include <dirent.h>
+#include <errno.h>
 #include <netdb.h>
 #include <netinet/in.h>
 #include <stdarg.h>
@@ -139,6 +141,16 @@ String_View sv_to_upper_sb(String_View sv, String_Builder *sb) {
   return sv_from_parts(dest, sv.count);
 }
 
+bool sv_end_with(String_View sv, const char *cstr) {
+  size_t cstr_count = strlen(cstr);
+  if (sv.count >= cstr_count) {
+    size_t ending_start = sv.count - cstr_count;
+    String_View sv_ending = sv_from_parts(sv.data + ending_start, cstr_count);
+    return sv_eq(sv_ending, sv_from_cstr(cstr));
+  }
+  return false;
+}
+
 void send_response(int client_fd, const char *version, int status,
                    const char *reason, const char *content_type,
                    const char *body) {
@@ -178,6 +190,7 @@ void send_response(int client_fd, const char *version, int status,
 
   free(sb.items);
 }
+
 void respond_400(int client_fd, const char *version) {
   send_response(client_fd, version, 400, "Bad Request", "text/plain",
                 "400 Bad Request");
@@ -191,6 +204,53 @@ void respond_404(int client_fd, const char *version) {
 void respond_500(int client_fd, const char *version) {
   send_response(client_fd, version, 500, "Internal Server Error", "text/plain",
                 "500 Internal Server Error");
+}
+
+#define return_defer(value)                                                    \
+  do {                                                                         \
+    result = (value);                                                          \
+    goto defer;                                                                \
+  } while (0)
+
+bool read_entire_file(const char *path, String_Builder *sb) {
+  bool result = true;
+
+  FILE *f = fopen(path, "rb");
+  size_t new_count = 0;
+  long long m = 0;
+  if (f == NULL)
+    return_defer(false);
+  if (fseek(f, 0, SEEK_END) < 0)
+    return_defer(false);
+#ifndef _WIN32
+  m = ftell(f);
+#else
+  m = _ftelli64(f);
+#endif
+  if (m < 0)
+    return_defer(false);
+  if (fseek(f, 0, SEEK_SET) < 0)
+    return_defer(false);
+
+  new_count = sb->count + m;
+  if (new_count > sb->capacity) {
+    sb->items = DECLTYPE_CAST(sb->items) realloc(sb->items, new_count);
+    assert(sb->items != NULL && "Buy more RAM lool!!");
+    sb->capacity = new_count;
+  }
+
+  fread(sb->items + sb->count, m, 1, f);
+  if (ferror(f)) {
+    return_defer(false);
+  }
+  sb->count = new_count;
+
+defer:
+  if (!result)
+    log_error("Could not read file %s: %s", path, strerror(errno));
+  if (f)
+    fclose(f);
+  return result;
 }
 
 typedef struct {
@@ -248,7 +308,6 @@ int main(void) {
 
     String_View method = sv_chop_by_delim(&request_line, ' ');
     if (method.count == 0) {
-
       log_error("missing method");
       respond_400(client_fd, "HTTP/1.0");
       goto close_connection;
@@ -262,12 +321,14 @@ int main(void) {
     }
 
     String_View version = sv_chop_by_delim(&request_line, '\n');
-    if (version.count == 0 || version.data[version.count - 1] != '\r') {
+    if (version.count == 0) {
       log_error("missing HTTP version");
       respond_400(client_fd, "HTTP/1.0");
       goto close_connection;
     }
-    version.count--;
+    if (version.data[version.count - 1] == '\r') {
+      version.count--;
+    }
 
     HTTP_Headers headers = {0};
     Hashmap *headers_map = NULL;
@@ -276,7 +337,6 @@ int main(void) {
       if (line.count == 0 || (line.count == 1 && line.data[0] == '\r')) {
         break;
       }
-
       if (line.data[line.count - 1] == '\r') {
         line.count--;
       }
@@ -296,24 +356,66 @@ int main(void) {
       *upsert(&headers_map, h.key) = h.value;
     }
 
-    // printf("Headers Count: %zu\n", headers.count);
-    // for (size_t i = 0; i < headers.count; i++) {
-    //   printf("  " SV_Fmt ": " SV_Fmt "\n", SV_Arg(headers.items[i].key),
-    //          SV_Arg(headers.items[i].value));
-    // }
+    printf("Headers Count: %zu\n", headers.count);
+    for (size_t i = 0; i < headers.count; i++) {
+      printf("  " SV_Fmt ": " SV_Fmt "\n", SV_Arg(headers.items[i].key),
+             SV_Arg(headers.items[i].value));
+    }
 
     // TODO: HTTP 1.1 Check obligatory HOST header
     // Check Connection header and loop until close
+    //
+    // String_View *host = upsert(&headers_map, sv_from_cstr("host"));
+    // if (sv_eq(version, sv_from_cstr("HTTP/1.1")) && host->count > 0) {
+    //   String_View *connection =
+    //       upsert(&headers_map, sv_from_cstr("connection"));
+    //   if (connection->data) {
+    //     respond_400(client_fd, "HTTP/1.0");
+    //     goto close_connection;
+    //   }
+    //
+    //   if (sv_eq(*connection, sv_from_cstr("close"))) {
+    //     TODO("close connection");
+    //   }
+    //   if (sv_eq(*connection, sv_from_cstr("keep-alive"))) {
+    //     TODO("don't close connection");
+    //   }
+    // }
 
     // TODO: Maybe check the method and Transfer-Encoding: chunked
     // Check if Content-Length doesn't exceed the buffer
-    // Content-Length Size discussion 
+    // Content-Length Size discussion
     // https://stackoverflow.com/questions/2880722/can-http-post-be-limitless#55998160
     String_View *content_lenght =
         upsert(&headers_map, sv_from_cstr("content-length"));
     if (content_lenght->data) {
       printf("Rest of SV\n" SV_Fmt "\n", SV_Arg(sv));
       TODO("read exactly Content-Length bytes");
+    }
+
+    if (sv_eq(method, sv_from_cstr("GET"))) {
+      if (sv_eq(path, sv_from_cstr("/"))) {
+        send_response(client_fd, "HTTP/1.0", 200, "OK", "text/plain",
+                      "Hello, world! From Home");
+        goto close_connection;
+      }
+
+      String_Builder file = {0};
+
+      String_Builder full_path = {0};
+      sb_appendf(&full_path, "./public" SV_Fmt, SV_Arg(path));
+      if (!read_entire_file(full_path.items, &file)) {
+        respond_404(client_fd, "HTTP/1.0");
+        goto close_connection;
+      }
+
+      const char *filetype = "text/plain";
+      if (sv_end_with(path, ".html")) {
+        filetype = "text/html";
+      }
+
+      send_response(client_fd, "HTTP/1.0", 200, "OK", filetype, file.items);
+      goto close_connection;
     }
 
     // TODO: Check Golang as a reference API
