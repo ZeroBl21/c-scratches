@@ -1,0 +1,2 @@
+Hola, mundo!
+Este es un archivo TXT servido desde Z CServer HTTP/1.0.
