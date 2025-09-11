@@ -69,6 +69,9 @@ typedef struct {
 
 #define sb_append_null(sb) da_append_many(sb, "", 1)
 
+// Free the memory allocated by a string builder
+#define sb_free(sb) free((sb).items)
+
 #define sb_to_sv(sb) sv_from_parts((sb).items, (sb).count)
 
 #ifndef SV_Fmt
