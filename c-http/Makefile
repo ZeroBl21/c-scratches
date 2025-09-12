@@ -10,8 +10,13 @@ build: ./src/main.c
 run: build
 	./bin/a
 
-test: 
+http/get: 
 	curl -v http://localhost:3490/
+
+http/post:
+	curl -X POST -v http://localhost:3490/create \
+		-H "Content-Type: application/json" \
+		-d '{"input": "let x = 10;"}'
 
 clean:
 	rm -f ./bin/
