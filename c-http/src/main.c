@@ -7,6 +7,7 @@
 #include <netdb.h>
 #include <netinet/in.h>
 #include <stdarg.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -242,6 +243,66 @@ void sb_path_clean_absolute(String_Builder *sb, String_View path) {
   sb_free(tmp);
 }
 
+// Converts a String_View to int64_t (base 10).
+// Returns true if valid, false on error (invalid character, overflow, or
+// underflow).
+bool sv_to_i64(String_View sv, int64_t *out) {
+  if (sv.count == 0)
+    return false;
+
+  size_t i = 0;
+  bool negative = false;
+
+  if (sv.data[0] == '-') {
+    negative = true;
+    i++;
+  } else if (sv.data[0] == '+') {
+    i++;
+  }
+
+  if (i == sv.count)
+    return false; // only a sign, no digits
+
+  uint64_t result = 0;
+  for (; i < sv.count; i++) {
+    char c = sv.data[i];
+    if (c < '0' || c > '9') {
+      return false; // not a decimal digit
+    }
+    uint64_t digit = (uint64_t)(c - '0');
+
+    // Overflow check: result * 10 + digit > UINT64_MAX
+    if (result > (UINT64_MAX - digit) / 10) {
+      errno = ERANGE;
+      return false;
+    }
+    result = result * 10 + digit;
+  }
+
+  if (negative) {
+    if (result > (uint64_t)INT64_MAX + 1)
+      return false;
+    *out = -(int64_t)result;
+  } else {
+    if (result > INT64_MAX)
+      return false;
+    *out = (int64_t)result;
+  }
+
+  return true;
+}
+
+// Helper for int32_t
+bool sv_to_i32(String_View sv, int32_t *out) {
+  int64_t tmp;
+  if (!sv_to_i64(sv, &tmp))
+    return false;
+  if (tmp < INT32_MIN || tmp > INT32_MAX)
+    return false;
+  *out = (int32_t)tmp;
+  return true;
+}
+
 void send_response(int client_fd, const char *version, int status,
                    const char *reason, const char *content_type,
                    const char *body) {
@@ -280,6 +341,12 @@ void send_response(int client_fd, const char *version, int status,
   send(client_fd, sb.items, sb.count, 0);
 
   sb_free(sb);
+}
+
+void respond_201(int client_fd, const char *version, const char *body) {
+  // If body is NULL, we can send an empty response
+  send_response(client_fd, version, 201, "Created", "text/plain",
+                body ? body : "");
 }
 
 void respond_400(int client_fd, const char *version) {
@@ -355,6 +422,11 @@ typedef struct {
   size_t capacity;
 } HTTP_Headers;
 
+#define MAX_HEADER_SIZE (KB(8))    // each header
+#define MAX_HEADERS_TOTAL (KB(32)) // total
+
+#define MAX_CONTENT_LEN (MB(10)) // total
+
 int main(void) {
   int listener = setup_server_socket(NULL, PORT, 10);
 
@@ -397,6 +469,7 @@ int main(void) {
 
     String_View request_line = sv_chop_by_delim(&sv, '\n');
 
+    // TODO: Validate Method
     String_View method = sv_chop_by_delim(&request_line, ' ');
     if (method.count == 0) {
       log_error("missing method");
@@ -433,6 +506,8 @@ int main(void) {
       }
 
       String_View key = sv_chop_by_delim(&line, ':');
+      key = sv_trim(key);
+      line = sv_trim(line);
       if (key.count == 0 || line.count == 0) {
         printf("Key: " SV_Fmt " Value: " SV_Fmt "\n", SV_Arg(key),
                SV_Arg(line));
@@ -447,6 +522,7 @@ int main(void) {
       *upsert(&headers_map, h.key) = h.value;
     }
 
+    printf("--------------------------------------\n");
     printf("Headers Count: %zu\n", headers.count);
     for (size_t i = 0; i < headers.count; i++) {
       printf("  " SV_Fmt ": " SV_Fmt "\n", SV_Arg(headers.items[i].key),
@@ -455,7 +531,9 @@ int main(void) {
 
     // TODO: HTTP 1.1 Check obligatory HOST header
     // Check Connection header and loop until close
-    //
+    // This is to handle closing the connection
+    // Golang for reference http/transfer.go:748:0
+
     // String_View *host = upsert(&headers_map, sv_from_cstr("host"));
     // if (sv_eq(version, sv_from_cstr("HTTP/1.1")) && host->count > 0) {
     //   String_View *connection =
@@ -477,11 +555,48 @@ int main(void) {
     // Check if Content-Length doesn't exceed the buffer
     // Content-Length Size discussion
     // https://stackoverflow.com/questions/2880722/can-http-post-be-limitless#55998160
-    String_View *content_lenght =
-        upsert(&headers_map, sv_from_cstr("content-length"));
-    if (content_lenght->data) {
-      printf("Rest of SV\n" SV_Fmt "\n", SV_Arg(sv));
-      TODO("read exactly Content-Length bytes");
+    if (sv_eq(method, sv_from_cstr("POST"))) {
+
+      // TODO: Move body read to a function
+      // handle `Transfer-Encoding: chunked`
+      String_View *cl_sv = upsert(&headers_map, sv_from_cstr("content-length"));
+      // A valid Content-Length is required on all HTTP/1.0 POST requests.
+      if (!cl_sv->data || sv.count == 0) {
+        log_error("Missing Content-Length or Body");
+        respond_400(client_fd, "HTTP/1.0");
+        goto close_connection;
+      }
+
+      int64_t content_len;
+      if (!sv_to_i64(*cl_sv, &content_len) ||
+          content_len > (int64_t)MAX_CONTENT_LEN) {
+        printf("Content-Length = %lu\n", content_len);
+        log_error("Invalid number or too big");
+        respond_400(client_fd, "HTTP/1.0"); // invalid or too big
+        goto close_connection;
+      }
+
+      printf("Content-Length = %lu\n", content_len);
+      printf("sv count = %lu\n", sv.count);
+      if (content_len != (int64_t)sv.count) {
+        TODO("Handle missing bytes");
+      }
+      // If the media type remains unknown, the recipient should
+      // treat it as type "application/octet-stream".
+      printf("Body\n" SV_Fmt "\n", SV_Arg(sv));
+
+      if (sv_eq(path, sv_from_cstr("/create"))) {
+        // respond_201(client_fd, "HTTP/1.0", "Resource created successfully");
+        String_Builder response = {0};
+        sb_appendf(&response, SV_Fmt, SV_Arg(sv));
+        sb_append_null(&response);
+
+        respond_201(client_fd, "HTTP/1.0", sb_to_sv(response).data);
+        goto close_connection;
+      }
+
+      respond_404(client_fd, "HTTP/1.0");
+      goto close_connection;
     }
 
     if (sv_eq(method, sv_from_cstr("GET"))) {
@@ -503,6 +618,7 @@ int main(void) {
         goto close_connection;
       }
 
+      // TODO: Make a extensions table
       const char *filetype = "text/plain";
       if (sv_end_with(path, ".html")) {
         filetype = "text/html";
