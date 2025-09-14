@@ -456,6 +456,50 @@ bool http_parse_request_line(HTTP_Request *request, String_View request_line) {
   return true;
 }
 
+bool http_parse_headers(HTTP_Request *request, String_Builder *buffer,
+                        String_View header_lines) {
+  size_t total_header_size = 0;
+  while (header_lines.count > 0) {
+    String_View line = sv_chop_by_delim(&header_lines, '\n');
+
+    // End of headers
+    if (line.count == 0 || (line.count == 1 && line.data[0] == '\r')) {
+      return true;
+    }
+    if (line.data[line.count - 1] == '\r') {
+      line.count--;
+    }
+
+    if (line.count > MAX_HEADER_SIZE) {
+      log_error("Header line exceeds maximum size: %zu > %d", line.count,
+                MAX_HEADER_SIZE);
+      return false;
+    }
+
+    total_header_size += line.count;
+    if (total_header_size > MAX_HEADERS_TOTAL) {
+      log_error("Total headers exceed maximum allowed size: %zu > %d",
+                total_header_size, MAX_HEADERS_TOTAL);
+      return false;
+    }
+
+    String_View key = sv_chop_by_delim(&line, ':');
+    key = sv_trim(key);
+    line = sv_trim(line);
+    if (key.count == 0 || line.count == 0) {
+      log_error("invalid header line: missing key or value");
+      return false;
+    }
+
+    HTTP_Header h = {.key = sv_to_lower_sb(buffer, key),
+                     .value = sv_to_lower_sb(buffer, line)};
+    da_append(&request->headers, h);
+    *upsert(&request->headers_map, h.key) = h.value;
+  }
+
+  return true;
+}
+
 int main(void) {
   int listener = setup_server_socket(NULL, PORT, 10);
 
