@@ -441,6 +441,21 @@ typedef struct {
 
 #define MAX_CONTENT_LEN (MB(10)) // total
 
+bool http_parse_request_line(HTTP_Request *request, String_View request_line) {
+  request->method = sv_chop_by_delim(&request_line, ' ');
+  request->request_uri = sv_chop_by_delim(&request_line, ' ');
+  request->version = sv_chop_by_delim(&request_line, '\n');
+  if (request->method.count == 0 || request->request_uri.count == 0 ||
+      request->version.count == 0) {
+    return false;
+  }
+  if (request->version.data[request->version.count - 1] == '\r') {
+    request->version.count--;
+  }
+
+  return true;
+}
+
 int main(void) {
   int listener = setup_server_socket(NULL, PORT, 10);
 
