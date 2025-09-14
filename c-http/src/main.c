@@ -422,6 +422,20 @@ typedef struct {
   size_t capacity;
 } HTTP_Headers;
 
+typedef struct {
+  String_View method;
+  String_View request_uri;
+  String_View version;
+
+  int64_t content_len;
+  String_View host;
+
+  HTTP_Headers headers;
+  Hashmap *headers_map;
+
+  String_Builder body;
+} HTTP_Request;
+
 #define MAX_HEADER_SIZE (KB(8))    // each header
 #define MAX_HEADERS_TOTAL (KB(32)) // total
 
