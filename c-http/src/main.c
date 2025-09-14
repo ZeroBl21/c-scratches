@@ -523,6 +523,7 @@ int main(void) {
   printf("Listening on port %s\n", PORT);
 
   for (;;) {
+    // TODO: Get ADDR from request
     // struct sockaddr_storage their_addr;
     // socklen_t addr_size = sizeof(their_addr);
 
@@ -535,9 +536,12 @@ int main(void) {
 
     String_Builder sb_recv = {0};
     da_reserve(&sb_recv, MB(4));
-    HTTP_Headers headers = {0};
+
+    HTTP_Request request = {0};
+
     String_Builder full_path = {0};
     String_Builder file = {0};
+
     for (bool shouldClose = false; !shouldClose;) {
 
       for (;;) {
@@ -561,71 +565,72 @@ int main(void) {
       printf("--------------------------------------\n");
       printf("%.*s\n", (int)sb_recv.count, sb_recv.items);
 
-      String_View sv = sb_to_sv(sb_recv);
+      String_View request_data = sb_to_sv(sb_recv);
 
-      String_View request_line = sv_chop_by_delim(&sv, '\n');
+      String_View request_line = sv_chop_by_delim(&request_data, '\n');
+
+      if (!http_parse_request_line(&request, request_line)) {
+        log_error("malformed HTTP request %s", request_line);
+        shouldClose = true;
+        goto defer;
+      }
 
       // TODO: Validate Method
-      String_View method = sv_chop_by_delim(&request_line, ' ');
-      if (method.count == 0) {
+      if (request.method.count == 0) {
         log_error("missing method");
         respond_400(client_fd, sv_from_cstr("HTTP/1.0"));
         shouldClose = true;
         goto defer;
       }
 
-      String_View path = sv_chop_by_delim(&request_line, ' ');
-      if (path.count == 0) {
-        log_error("missing path");
+      if (request.request_uri.count == 0) {
+        log_error("missing request_uri/path");
         respond_400(client_fd, sv_from_cstr("HTTP/1.0"));
         shouldClose = true;
         goto defer;
       }
 
-      String_View version = sv_chop_by_delim(&request_line, '\n');
-      if (version.count == 0) {
+      // TODO: Validate Version or change format to
+      // Proto, ProtoMayor, ProtoMinor
+      if (request.version.count == 0) {
         log_error("missing HTTP version");
         respond_400(client_fd, sv_from_cstr("HTTP/1.0"));
         shouldClose = true;
         goto defer;
       }
-      if (version.data[version.count - 1] == '\r') {
-        version.count--;
-      }
 
-      Hashmap *headers_map = NULL;
-      while (sv.count > 0) {
-        String_View line = sv_chop_by_delim(&sv, '\n');
-        if (line.count == 0 || (line.count == 1 && line.data[0] == '\r')) {
-          break;
-        }
-        if (line.data[line.count - 1] == '\r') {
-          line.count--;
-        }
-
-        String_View key = sv_chop_by_delim(&line, ':');
-        key = sv_trim(key);
-        line = sv_trim(line);
-        if (key.count == 0 || line.count == 0) {
-          printf("Key: " SV_Fmt " Value: " SV_Fmt "\n", SV_Arg(key),
-                 SV_Arg(line));
-          log_error("invalid header line: missing key or value");
-          respond_400(client_fd, version);
-          shouldClose = true;
-          goto defer;
-        }
-
-        HTTP_Header h = {.key = sv_to_lower_sb(&sb_recv, key),
-                         .value = sv_to_lower_sb(&sb_recv, line)};
-        da_append(&headers, h);
-        *upsert(&headers_map, h.key) = h.value;
+      if (!http_parse_headers(&request, &sb_recv, request_data)) {
+        shouldClose = true;
+        goto defer;
       }
 
       printf("--------------------------------------\n");
-      printf("Headers Count: %zu\n", headers.count);
-      for (size_t i = 0; i < headers.count; i++) {
-        printf("  " SV_Fmt ": " SV_Fmt "\n", SV_Arg(headers.items[i].key),
-               SV_Arg(headers.items[i].value));
+      printf("Headers Count: %zu\n", request.headers.count);
+      for (size_t i = 0; i < request.headers.count; i++) {
+        printf("  " SV_Fmt ": " SV_Fmt "\n",
+               SV_Arg(request.headers.items[i].key),
+               SV_Arg(request.headers.items[i].value));
+      }
+
+      // TODO: RFC 7230, section 5.3: Must treat
+      //	GET /index.html HTTP/1.1
+      //	Host: www.google.com
+      // and
+      //	GET http://www.google.com/index.html HTTP/1.1
+      //	Host: doesntmatter
+      // the same. In the second case, any Host line is ignored.
+      // So get Host from URI if any
+      // Golang for reference http/request.go:1149:0
+      request.host = *upsert(&request.headers_map, sv_from_cstr("host"));
+
+      // HTTP/1.0
+      if (sv_eq(request.version, sv_from_cstr("HTTP/1.0"))) {
+        shouldClose = true; // close by default
+        String_View *connection =
+            upsert(&request.headers_map, sv_from_cstr("connection"));
+        if (connection && sv_eq(*connection, sv_from_cstr("keep-alive"))) {
+          shouldClose = false;
+        }
       }
 
       // TODO: HTTP 1.1 Check obligatory HOST header
@@ -633,30 +638,19 @@ int main(void) {
       // This is to handle closing the connection
       // Golang for reference http/transfer.go:748:0
 
-      // HTTP/1.0
-      if (sv_eq(version, sv_from_cstr("HTTP/1.0"))) {
-        shouldClose = true; // close by default
-        String_View *connection =
-            upsert(&headers_map, sv_from_cstr("connection"));
-        if (connection && sv_eq(*connection, sv_from_cstr("keep-alive"))) {
-          shouldClose = false;
-        }
-      }
-
-      // // HTTP/1.1
-      if (sv_eq(version, sv_from_cstr("HTTP/1.1"))) {
+      // HTTP/1.1
+      if (sv_eq(request.version, sv_from_cstr("HTTP/1.1"))) {
         // HTTP 1.1: Check obligatory HOST header
-        String_View *host = upsert(&headers_map, sv_from_cstr("host"));
-        if (!host || host->count == 0) {
+        if (!request.host.data || request.host.count == 0) {
           log_error("HTTP/1.1 request missing Host header");
-          respond_400(client_fd, version);
+          respond_400(client_fd, request.version);
           shouldClose = true;
           goto defer;
         }
 
         shouldClose = false; // persistent by default
         String_View *connection =
-            upsert(&headers_map, sv_from_cstr("connection"));
+            upsert(&request.headers_map, sv_from_cstr("connection"));
         if (connection && sv_eq(*connection, sv_from_cstr("close"))) {
           shouldClose = true;
         }
@@ -666,15 +660,15 @@ int main(void) {
       // Check if Content-Length doesn't exceed the buffer
       // Content-Length Size discussion
       // https://stackoverflow.com/questions/2880722/can-http-post-be-limitless#55998160
-      if (sv_eq(method, sv_from_cstr("POST"))) {
+      if (sv_eq(request.method, sv_from_cstr("POST"))) {
         // TODO: Move body read to a function
         // handle `Transfer-Encoding: chunked`
         String_View *cl_sv =
-            upsert(&headers_map, sv_from_cstr("content-length"));
+            upsert(&request.headers_map, sv_from_cstr("content-length"));
         // A valid Content-Length is required on all HTTP/1.0 POST requests.
-        if (!cl_sv->data || sv.count == 0) {
+        if (!cl_sv->data || request_data.count == 0) {
           log_error("Missing Content-Length or Body");
-          respond_400(client_fd, version);
+          respond_400(client_fd, request.version);
           shouldClose = true;
           goto defer;
         }
@@ -684,75 +678,76 @@ int main(void) {
             content_len > (int64_t)MAX_CONTENT_LEN) {
           printf("Content-Length = %lu\n", content_len);
           log_error("Invalid number or too big");
-          respond_400(client_fd, version); // invalid or too big
+          respond_400(client_fd, request.version); // invalid or too big
           shouldClose = true;
           goto defer;
         }
 
         printf("Content-Length = %lu\n", content_len);
-        printf("sv count = %lu\n", sv.count);
-        if (content_len != (int64_t)sv.count) {
+        printf("sv count = %lu\n", request_data.count);
+        if (content_len != (int64_t)request_data.count) {
           TODO("Handle missing bytes");
         }
 
         // If the media type remains unknown, the recipient should
         // treat it as type "application/octet-stream".
-        printf("Body\n" SV_Fmt "\n", SV_Arg(sv));
+        printf("Body\n" SV_Fmt "\n", SV_Arg(request_data));
 
-        if (sv_eq(path, sv_from_cstr("/create"))) {
+        if (sv_eq(request.request_uri, sv_from_cstr("/create"))) {
           // respond_201(client_fd, "HTTP/1.0", "Resource created
           // successfully");
           String_Builder response = {0};
-          sb_appendf(&response, SV_Fmt, SV_Arg(sv));
+          sb_appendf(&response, SV_Fmt, SV_Arg(request_data));
           sb_append_null(&response);
 
-          respond_201(client_fd, version, sb_to_sv(response), shouldClose);
+          respond_201(client_fd, request.version, sb_to_sv(response),
+                      shouldClose);
 
           goto defer;
         }
 
-        respond_404(client_fd, version);
+        respond_404(client_fd, request.version);
         goto defer;
       }
 
-      if (sv_eq(method, sv_from_cstr("GET"))) {
-        if (sv_eq(path, sv_from_cstr("/"))) {
-          send_response(client_fd, version, 200, "OK", "text/plain",
+      if (sv_eq(request.method, sv_from_cstr("GET")) ||
+          sv_eq(request.method, sv_from_cstr("HEAD"))) {
+        if (sv_eq(request.request_uri, sv_from_cstr("/"))) {
+          send_response(client_fd, request.version, 200, "OK", "text/plain",
                         sv_from_cstr("Hello, world! From Home\n"), shouldClose);
           goto defer;
         }
 
-        sb_appendf(&full_path, "./public" SV_Fmt, SV_Arg(path));
+        sb_appendf(&full_path, "./public" SV_Fmt, SV_Arg(request.request_uri));
         sb_path_clean(&full_path, sb_to_sv(full_path));
         sb_append_null(&full_path);
 
         if (!read_entire_file(full_path.items, &file)) {
-          respond_404(client_fd, version);
+          respond_404(client_fd, request.version);
           goto defer;
         }
 
         // TODO: Make a extensions table
         const char *filetype = "text/plain";
-        if (sv_end_with(path, ".html")) {
+        if (sv_end_with(request.request_uri, ".html")) {
           filetype = "text/html";
         }
-        if (sv_end_with(path, ".png")) {
+        if (sv_end_with(request.request_uri, ".png")) {
           filetype = "image/png";
         }
 
-        send_response(client_fd, version, 200, "OK", filetype, sb_to_sv(file),
-                      shouldClose);
+        send_response(client_fd, request.version, 200, "OK", filetype,
+                      sb_to_sv(file), shouldClose);
 
         goto defer;
       }
 
       // TODO: Check Golang as a reference API
-      send_response(client_fd, version, 200, "OK", "text/plain",
+      send_response(client_fd, request.version, 200, "OK", "text/plain",
                     sv_from_cstr("Hello, world!"), shouldClose);
 
     defer:
       sb_recv.count = 0;
-      headers.count = 0;
       full_path.count = 0;
       file.count = 0;
 
@@ -763,8 +758,8 @@ int main(void) {
 
     printf("Closing Connection\n");
 
+
     sb_free(sb_recv);
-    sb_free(headers);
     sb_free(full_path);
     sb_free(file);
     close(client_fd);
