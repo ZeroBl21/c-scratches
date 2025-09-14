@@ -747,6 +747,10 @@ int main(void) {
                     sv_from_cstr("Hello, world!"), shouldClose);
 
     defer:
+      // TODO: Reset Headers Map
+      request.headers.count = 0;
+      hashmap_reset(request.headers_map);
+
       sb_recv.count = 0;
       full_path.count = 0;
       file.count = 0;
@@ -758,6 +762,8 @@ int main(void) {
 
     printf("Closing Connection\n");
 
+    // TODO: Free Headers Map
+    sb_free(request.headers);
 
     sb_free(sb_recv);
     sb_free(full_path);
