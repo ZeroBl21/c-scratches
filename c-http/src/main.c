@@ -500,6 +500,18 @@ bool http_parse_headers(HTTP_Request *request, String_Builder *buffer,
   return true;
 }
 
+void hashmap_reset(Hashmap *m) {
+  if (!m)
+    return;
+
+  m->key.count = 0;
+  m->value.count = 0;
+
+  for (int i = 0; i < 4; i++) {
+    hashmap_reset(m->child[i]);
+  }
+}
+
 int main(void) {
   int listener = setup_server_socket(NULL, PORT, 10);
 
