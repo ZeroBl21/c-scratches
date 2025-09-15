@@ -325,7 +325,6 @@ void send_response(int client_fd, String_View version, int status,
   sb_appendf(&sb, "Content-Type: %s\r\n",
              content_type ? content_type : "text/plain");
 
-  // TODO: Check when close the Connection
   sb_appendf(&sb, "Connection: %s\r\n", shouldClose ? "close" : "keep-alive");
 
   // headers end
@@ -500,6 +499,25 @@ bool http_parse_headers(HTTP_Request *request, String_Builder *buffer,
   return true;
 }
 
+bool http_request_should_close(HTTP_Request *request) {
+  // HTTP/1.0: close by default, keep-alive opt-in
+  if (sv_eq(request->version, sv_from_cstr("HTTP/1.0"))) {
+    String_View *connection =
+        upsert(&request->headers_map, sv_from_cstr("connection"));
+    return !(connection && sv_eq(*connection, sv_from_cstr("keep-alive")));
+  }
+
+  // HTTP/1.1: keep-alive by default, close opt-in
+  if (sv_eq(request->version, sv_from_cstr("HTTP/1.1"))) {
+    String_View *connection =
+        upsert(&request->headers_map, sv_from_cstr("connection"));
+    return (connection && sv_eq(*connection, sv_from_cstr("close")));
+  }
+
+  // Unknown close for security
+  return true;
+}
+
 void hashmap_reset(Hashmap *m) {
   if (!m)
     return;
@@ -623,38 +641,19 @@ int main(void) {
       // Golang for reference http/request.go:1149:0
       request.host = *upsert(&request.headers_map, sv_from_cstr("host"));
 
-      // HTTP/1.0
-      if (sv_eq(request.version, sv_from_cstr("HTTP/1.0"))) {
-        shouldClose = true; // close by default
-        String_View *connection =
-            upsert(&request.headers_map, sv_from_cstr("connection"));
-        if (connection && sv_eq(*connection, sv_from_cstr("keep-alive"))) {
-          shouldClose = false;
-        }
-      }
-
-      // TODO: HTTP 1.1 Check obligatory HOST header
-      // Check Connection header and loop until close
-      // This is to handle closing the connection
-      // Golang for reference http/transfer.go:748:0
-
-      // HTTP/1.1
+      // RFC 7230 §5.4: In HTTP/1.1 all requests MUST include a Host header
+      // field. If the Host header is missing or empty, the server MUST respond
+      // with 400 Bad Request. Golang for reference http/transfer.go:748:0
       if (sv_eq(request.version, sv_from_cstr("HTTP/1.1"))) {
-        // HTTP 1.1: Check obligatory HOST header
         if (!request.host.data || request.host.count == 0) {
           log_error("HTTP/1.1 request missing Host header");
           respond_400(client_fd, request.version);
           shouldClose = true;
           goto defer;
         }
-
-        shouldClose = false; // persistent by default
-        String_View *connection =
-            upsert(&request.headers_map, sv_from_cstr("connection"));
-        if (connection && sv_eq(*connection, sv_from_cstr("close"))) {
-          shouldClose = true;
-        }
       }
+
+      shouldClose = http_request_should_close(&request);
 
       // TODO: Maybe check the method and Transfer-Encoding: chunked
       // Check if Content-Length doesn't exceed the buffer
