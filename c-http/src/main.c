@@ -560,14 +560,14 @@ int main(void) {
     String_Builder full_path = {0};
     String_Builder file = {0};
 
-    for (bool shouldClose = false; !shouldClose;) {
+    for (bool should_close = false; !should_close;) {
 
       for (;;) {
         ssize_t n = recv(client_fd, sb_recv.items + sb_recv.count,
                          sb_recv.capacity - sb_recv.count, 0);
         if (n <= 0) {
           log_error("error or client close");
-          shouldClose = true;
+          should_close = true;
           goto defer;
         }
         sb_recv.count += (size_t)n;
@@ -589,7 +589,7 @@ int main(void) {
 
       if (!http_parse_request_line(&request, request_line)) {
         log_error("malformed HTTP request %s", request_line);
-        shouldClose = true;
+        should_close = true;
         goto defer;
       }
 
@@ -597,14 +597,14 @@ int main(void) {
       if (request.method.count == 0) {
         log_error("missing method");
         respond_400(client_fd, sv_from_cstr("HTTP/1.0"));
-        shouldClose = true;
+        should_close = true;
         goto defer;
       }
 
       if (request.request_uri.count == 0) {
         log_error("missing request_uri/path");
         respond_400(client_fd, sv_from_cstr("HTTP/1.0"));
-        shouldClose = true;
+        should_close = true;
         goto defer;
       }
 
@@ -613,12 +613,12 @@ int main(void) {
       if (request.version.count == 0) {
         log_error("missing HTTP version");
         respond_400(client_fd, sv_from_cstr("HTTP/1.0"));
-        shouldClose = true;
+        should_close = true;
         goto defer;
       }
 
       if (!http_parse_headers(&request, &sb_recv, request_data)) {
-        shouldClose = true;
+        should_close = true;
         goto defer;
       }
 
@@ -648,12 +648,12 @@ int main(void) {
         if (!request.host.data || request.host.count == 0) {
           log_error("HTTP/1.1 request missing Host header");
           respond_400(client_fd, request.version);
-          shouldClose = true;
+          should_close = true;
           goto defer;
         }
       }
 
-      shouldClose = http_request_should_close(&request);
+      should_close = http_request_should_close(&request);
 
       // TODO: Maybe check the method and Transfer-Encoding: chunked
       // Check if Content-Length doesn't exceed the buffer
@@ -668,7 +668,7 @@ int main(void) {
         if (!cl_sv->data || request_data.count == 0) {
           log_error("Missing Content-Length or Body");
           respond_400(client_fd, request.version);
-          shouldClose = true;
+          should_close = true;
           goto defer;
         }
 
@@ -678,7 +678,7 @@ int main(void) {
           printf("Content-Length = %lu\n", content_len);
           log_error("Invalid number or too big");
           respond_400(client_fd, request.version); // invalid or too big
-          shouldClose = true;
+          should_close = true;
           goto defer;
         }
 
@@ -700,7 +700,7 @@ int main(void) {
           sb_append_null(&response);
 
           respond_201(client_fd, request.version, sb_to_sv(response),
-                      shouldClose);
+                      should_close);
 
           goto defer;
         }
@@ -713,7 +713,7 @@ int main(void) {
           sv_eq(request.method, sv_from_cstr("HEAD"))) {
         if (sv_eq(request.request_uri, sv_from_cstr("/"))) {
           send_response(client_fd, request.version, 200, "OK", "text/plain",
-                        sv_from_cstr("Hello, world! From Home\n"), shouldClose);
+                        sv_from_cstr("Hello, world! From Home\n"), should_close);
           goto defer;
         }
 
@@ -736,14 +736,14 @@ int main(void) {
         }
 
         send_response(client_fd, request.version, 200, "OK", filetype,
-                      sb_to_sv(file), shouldClose);
+                      sb_to_sv(file), should_close);
 
         goto defer;
       }
 
       // TODO: Check Golang as a reference API
       send_response(client_fd, request.version, 200, "OK", "text/plain",
-                    sv_from_cstr("Hello, world!"), shouldClose);
+                    sv_from_cstr("Hello, world!"), should_close);
 
     defer:
       // TODO: Reset Headers Map
@@ -754,7 +754,7 @@ int main(void) {
       full_path.count = 0;
       file.count = 0;
 
-      if (shouldClose) {
+      if (should_close) {
         break;
       }
     }
