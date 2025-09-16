@@ -605,8 +605,14 @@ int main(void) {
       for (;;) {
         ssize_t n = recv(client_fd, sb_recv.items + sb_recv.count,
                          sb_recv.capacity - sb_recv.count, 0);
-        if (n <= 0) {
-          z_log(LOG_ERROR, "error or client close");
+        if (n == 0) {
+          z_log(LOG_WARN, "Client %d closed connection while reading body",
+                client_fd);
+          should_close = true;
+          goto defer;
+        } else if (n < 0) {
+          z_log(LOG_ERROR, "recv() failed for client %d: %s", client_fd,
+                strerror(errno));
           should_close = true;
           goto defer;
         }
@@ -756,8 +762,14 @@ int main(void) {
             char tmp[8192];
 
             ssize_t n = recv(client_fd, tmp, (int)to_read, 0);
-            if (n <= 0) {
-              z_log(LOG_ERROR, "error or client close while reading body");
+            if (n == 0) {
+              z_log(LOG_WARN, "Client %d closed connection while reading body",
+                    client_fd);
+              should_close = true;
+              goto defer;
+            } else if (n < 0) {
+              z_log(LOG_ERROR, "recv() failed for client %d: %s", client_fd,
+                    strerror(errno));
               should_close = true;
               goto defer;
             }
