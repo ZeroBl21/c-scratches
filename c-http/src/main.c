@@ -103,6 +103,12 @@ int find_double_crlf(const String_View *sv) {
     abort();                                                                   \
   } while (0)
 
+#define UNREACHABLE(message)                                                   \
+  do {                                                                         \
+    fprintf(stderr, "%s:%d: UNREACHABLE: %s\n", __FILE__, __LINE__, message);  \
+    abort();                                                                   \
+  } while (0)
+
 typedef enum {
   LOG_DEBUG = -4,
   LOG_INFO = 0,
@@ -124,7 +130,7 @@ static const char *log_level_to_string(Log_Level level) {
   case LOG_DEBUG:
     return "DEBUG";
   case LOG_NO_LOGS:
-    return "NO_LOGS";
+    UNREACHABLE("z_log: NO_LOGS");
   default:
     return "UNKNOWN";
   }
