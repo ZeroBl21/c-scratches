@@ -19,4 +19,4 @@ http/post:
 		-d '{"input": "let x = 10;"}'
 
 clean:
-	rm -f ./bin/
+	rm -rf ./bin/*
