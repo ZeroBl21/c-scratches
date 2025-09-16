@@ -575,7 +575,7 @@ int main(void) {
     return -1;
   }
 
-  printf("Listening on port %s\n", PORT);
+  z_log(LOG_INFO, "Server listening on port %s", PORT);
 
   for (;;) {
     // TODO: Get ADDR from request
@@ -617,10 +617,9 @@ int main(void) {
           break; // completed headers
       }
 
-      printf("recv count %zu\nrecv capacity %zu\n", sb_recv.count,
-             sb_recv.capacity);
-
       printf("--------------------------------------\n");
+      z_log(LOG_DEBUG, "Received %zu bytes from client %d (capacity %zu)",
+            sb_recv.count, client_fd, sb_recv.capacity);
 
       String_View request_data = sb_to_sv(sb_recv);
 
