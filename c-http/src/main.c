@@ -456,10 +456,10 @@ bool http_parse_request_line(HTTP_Request *request, String_View request_line) {
 }
 
 bool http_parse_headers(HTTP_Request *request, String_Builder *buffer,
-                        String_View header_lines) {
+                        String_View *header_lines) {
   size_t total_header_size = 0;
-  while (header_lines.count > 0) {
-    String_View line = sv_chop_by_delim(&header_lines, '\n');
+  while (header_lines->count > 0) {
+    String_View line = sv_chop_by_delim(header_lines, '\n');
 
     // End of headers
     if (line.count == 0 || (line.count == 1 && line.data[0] == '\r')) {
@@ -617,7 +617,7 @@ int main(void) {
         goto defer;
       }
 
-      if (!http_parse_headers(&request, &sb_recv, request_data)) {
+      if (!http_parse_headers(&request, &sb_headers, &request_data)) {
         should_close = true;
         goto defer;
       }
