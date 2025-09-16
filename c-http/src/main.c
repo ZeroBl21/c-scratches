@@ -632,7 +632,8 @@ int main(void) {
       String_View request_line = sv_chop_by_delim(&request_data, '\n');
 
       if (!http_parse_request_line(&request, request_line)) {
-        z_log(LOG_ERROR, "malformed HTTP request %s", request_line);
+        z_log(LOG_ERROR, "Malformed HTTP request line: %.*s",
+              SV_Arg(request_line));
         should_close = true;
         goto defer;
       }
@@ -667,11 +668,12 @@ int main(void) {
       }
 
       printf("--------------------------------------\n");
-      printf("Headers Count: %zu\n", request.headers.count);
+
+      z_log(LOG_DEBUG, "Headers Count: %zu", request.headers.count);
       for (size_t i = 0; i < request.headers.count; i++) {
-        printf("  " SV_Fmt ": " SV_Fmt "\n",
-               SV_Arg(request.headers.items[i].key),
-               SV_Arg(request.headers.items[i].value));
+        z_log(LOG_DEBUG, "  Header [%zu]: %.*s: %.*s", i,
+              SV_Arg(request.headers.items[i].key),
+              SV_Arg(request.headers.items[i].value));
       }
 
       // TODO: RFC 7230, section 5.3: Must treat
