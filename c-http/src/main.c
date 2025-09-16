@@ -688,18 +688,51 @@ int main(void) {
 
         }
 
-        // If the media type remains unknown, the recipient should
-        // treat it as type "application/octet-stream".
-        printf("Body\n" SV_Fmt "\n", SV_Arg(request_data));
+        da_reserve(&request.body, (size_t)request.content_len);
+
+        // Append any body bytes already read with the headers
+        size_t initial = request_data.count;
+        if ((int64_t)initial > request.content_len) {
+          initial = (size_t)request.content_len;
+        }
+        da_append_many(&request.body, request_data.data, initial);
+
+        // TODO: Handle Transfer-Encoding: chunked
+        String_View *te =
+            upsert(&request.headers_map, sv_from_cstr("transfer-encoding"));
+        if (te && sv_eq(*te, sv_from_cstr("chunked"))) {
+          TODO("Implement parsing for chunked transfer encoding");
+        }
+
+        // Read the remaining bytes if needed
+        if ((int64_t)request.body.count < request.content_len) {
+          // TODO: Consider using select() or poll() with timeout to avoid
+          // blocking forever
+          while ((int64_t)request.body.count < request.content_len) {
+            size_t remaining = request.content_len - request.body.count;
+            size_t to_read = remaining > 8192 ? 8192 : remaining;
+            char tmp[8192];
+
+            ssize_t n = recv(client_fd, tmp, (int)to_read, 0);
+            if (n <= 0) {
+              log_error("error or client close while reading body");
+              should_close = true;
+              goto defer;
+            }
+
+            da_append_many(&request.body, tmp, (size_t)n);
+          }
+
+          if ((int64_t)request.body.count != request.content_len) {
+            log_error("Client closed connection before sending full body");
+            respond_400(client_fd, request.version);
+            should_close = true;
+            goto defer;
+          }
+        }
 
         if (sv_eq(request.request_uri, sv_from_cstr("/create"))) {
-          // respond_201(client_fd, "HTTP/1.0", "Resource created
-          // successfully");
-          String_Builder response = {0};
-          sb_appendf(&response, SV_Fmt, SV_Arg(request_data));
-          sb_append_null(&response);
-
-          respond_201(client_fd, request.version, sb_to_sv(response),
+          respond_201(client_fd, request.version, sb_to_sv(request.body),
                       should_close);
 
           goto defer;
@@ -746,8 +779,8 @@ int main(void) {
                     sv_from_cstr("Hello, world!"), should_close);
 
     defer:
-      // TODO: Reset Headers Map
       request.headers.count = 0;
+      request.body.count = 0;
       hashmap_reset(request.headers_map);
 
       sb_recv.count = 0;
@@ -764,6 +797,7 @@ int main(void) {
 
     // TODO: Free Headers Map
     sb_free(request.headers);
+    sb_free(request.body);
 
     sb_free(sb_recv);
     sb_free(sb_headers);
