@@ -686,6 +686,13 @@ int main(void) {
         printf("Content-Length = %lu\n", request.content_len);
         printf("sv count = %lu\n", request_data.count);
 
+        // Check for "Expect: 100-continue"
+        String_View *expect =
+            upsert(&request.headers_map, sv_from_cstr("expect"));
+        if (expect && sv_eq(*expect, sv_from_cstr("100-continue"))) {
+          // TODO: move to a function
+          const char *continue_msg = "HTTP/1.1 100 Continue\r\n\r\n";
+          send(client_fd, continue_msg, strlen(continue_msg), 0);
         }
 
         da_reserve(&request.body, (size_t)request.content_len);
