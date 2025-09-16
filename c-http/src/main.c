@@ -103,6 +103,50 @@ int find_double_crlf(const String_View *sv) {
     abort();                                                                   \
   } while (0)
 
+typedef enum {
+  LOG_DEBUG = -4,
+  LOG_INFO = 0,
+  LOG_WARN = 4,
+  LOG_ERROR = 8,
+  LOG_NO_LOGS = 1000 // mute total
+} Log_Level;
+
+static Log_Level CURRENT_LOG_LEVEL = LOG_DEBUG;
+
+static const char *log_level_to_string(Log_Level level) {
+  switch (level) {
+  case LOG_ERROR:
+    return "ERROR";
+  case LOG_WARN:
+    return "WARN";
+  case LOG_INFO:
+    return "INFO";
+  case LOG_DEBUG:
+    return "DEBUG";
+  case LOG_NO_LOGS:
+    return "NO_LOGS";
+  default:
+    return "UNKNOWN";
+  }
+}
+
+void log_set_level(Log_Level level) { CURRENT_LOG_LEVEL = level; }
+
+void z_log(Log_Level level, const char *fmt, ...) {
+  if (level < CURRENT_LOG_LEVEL || CURRENT_LOG_LEVEL == LOG_NO_LOGS) {
+    return; // no loggear
+  }
+
+  fprintf(stderr, "[%s] ", log_level_to_string(level));
+
+  va_list args;
+  va_start(args, fmt);
+  vfprintf(stderr, fmt, args);
+  va_end(args);
+
+  fprintf(stderr, "\n");
+}
+
 int log_error(const char *fmt, ...) {
   fprintf(stderr, "[ERROR]: ");
 
