@@ -555,6 +555,9 @@ int main(void) {
     String_Builder sb_recv = {0};
     da_reserve(&sb_recv, MB(4));
 
+    String_Builder sb_headers = {0};
+    da_reserve(&sb_headers, MAX_HEADERS_TOTAL);
+
     HTTP_Request request = {0};
 
     String_Builder full_path = {0};
@@ -751,6 +754,7 @@ int main(void) {
       hashmap_reset(request.headers_map);
 
       sb_recv.count = 0;
+      sb_headers.count = 0;
       full_path.count = 0;
       file.count = 0;
 
@@ -765,6 +769,7 @@ int main(void) {
     sb_free(request.headers);
 
     sb_free(sb_recv);
+    sb_free(sb_headers);
     sb_free(full_path);
     sb_free(file);
     close(client_fd);
