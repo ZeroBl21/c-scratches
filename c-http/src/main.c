@@ -668,27 +668,24 @@ int main(void) {
         String_View *cl_sv =
             upsert(&request.headers_map, sv_from_cstr("content-length"));
         // A valid Content-Length is required on all HTTP/1.0 POST requests.
-        if (!cl_sv->data || request_data.count == 0) {
+        if (!cl_sv->data) {
           log_error("Missing Content-Length or Body");
           respond_400(client_fd, request.version);
           should_close = true;
           goto defer;
         }
 
-        int64_t content_len;
-        if (!sv_to_i64(*cl_sv, &content_len) ||
-            content_len > (int64_t)MAX_CONTENT_LEN) {
-          printf("Content-Length = %lu\n", content_len);
+        if (!sv_to_i64(*cl_sv, &request.content_len) ||
+            request.content_len > (int64_t)MAX_CONTENT_LEN) {
           log_error("Invalid number or too big");
-          respond_400(client_fd, request.version); // invalid or too big
+          respond_400(client_fd, request.version);
           should_close = true;
           goto defer;
         }
 
-        printf("Content-Length = %lu\n", content_len);
+        printf("Content-Length = %lu\n", request.content_len);
         printf("sv count = %lu\n", request_data.count);
-        if (content_len != (int64_t)request_data.count) {
-          TODO("Handle missing bytes");
+
         }
 
         // If the media type remains unknown, the recipient should
