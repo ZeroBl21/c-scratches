@@ -153,19 +153,6 @@ void z_log(Log_Level level, const char *fmt, ...) {
   fprintf(stderr, "\n");
 }
 
-int log_error(const char *fmt, ...) {
-  fprintf(stderr, "[ERROR]: ");
-
-  va_list args;
-  va_start(args, fmt);
-  vfprintf(stderr, fmt, args);
-  va_end(args);
-
-  fputc('\n', stderr);
-
-  return -1; // código de error estándar
-}
-
 String_View sv_to_lower_sb(String_Builder *sb, String_View sv) {
   da_reserve(sb, sb->count + sv.count);
   char *dest = sb->items + sb->count;
@@ -454,7 +441,7 @@ bool read_entire_file(const char *path, String_Builder *sb) {
 
 defer:
   if (!result)
-    log_error("Could not read file %s: %s", path, strerror(errno));
+    z_log(LOG_ERROR, "Could not read file %s: %s", path, strerror(errno));
   if (f)
     fclose(f);
   return result;
@@ -520,15 +507,15 @@ bool http_parse_headers(HTTP_Request *request, String_Builder *buffer,
     }
 
     if (line.count > MAX_HEADER_SIZE) {
-      log_error("Header line exceeds maximum size: %zu > %d", line.count,
-                MAX_HEADER_SIZE);
+      z_log(LOG_ERROR, "Header line exceeds maximum size: %zu > %d", line.count,
+            MAX_HEADER_SIZE);
       return false;
     }
 
     total_header_size += line.count;
     if (total_header_size > MAX_HEADERS_TOTAL) {
-      log_error("Total headers exceed maximum allowed size: %zu > %d",
-                total_header_size, MAX_HEADERS_TOTAL);
+      z_log(LOG_ERROR, "Total headers exceed maximum allowed size: %zu > %d",
+            total_header_size, MAX_HEADERS_TOTAL);
       return false;
     }
 
@@ -536,7 +523,7 @@ bool http_parse_headers(HTTP_Request *request, String_Builder *buffer,
     key = sv_trim(key);
     line = sv_trim(line);
     if (key.count == 0 || line.count == 0) {
-      log_error("invalid header line: missing key or value");
+      z_log(LOG_ERROR, "invalid header line: missing key or value");
       return false;
     }
 
@@ -584,7 +571,7 @@ int main(void) {
   int listener = setup_server_socket(NULL, PORT, 10);
 
   if (listener < 0) {
-    log_error("error getting listening socket");
+    z_log(LOG_ERROR, "error getting listening socket");
     return -1;
   }
 
@@ -619,7 +606,7 @@ int main(void) {
         ssize_t n = recv(client_fd, sb_recv.items + sb_recv.count,
                          sb_recv.capacity - sb_recv.count, 0);
         if (n <= 0) {
-          log_error("error or client close");
+          z_log(LOG_ERROR, "error or client close");
           should_close = true;
           goto defer;
         }
@@ -634,28 +621,27 @@ int main(void) {
              sb_recv.capacity);
 
       printf("--------------------------------------\n");
-      printf("%.*s\n", (int)sb_recv.count, sb_recv.items);
 
       String_View request_data = sb_to_sv(sb_recv);
 
       String_View request_line = sv_chop_by_delim(&request_data, '\n');
 
       if (!http_parse_request_line(&request, request_line)) {
-        log_error("malformed HTTP request %s", request_line);
+        z_log(LOG_ERROR, "malformed HTTP request %s", request_line);
         should_close = true;
         goto defer;
       }
 
       // TODO: Validate Method
       if (request.method.count == 0) {
-        log_error("missing method");
+        z_log(LOG_ERROR, "missing method");
         respond_400(client_fd, sv_from_cstr("HTTP/1.0"));
         should_close = true;
         goto defer;
       }
 
       if (request.request_uri.count == 0) {
-        log_error("missing request_uri/path");
+        z_log(LOG_ERROR, "missing request_uri/path");
         respond_400(client_fd, sv_from_cstr("HTTP/1.0"));
         should_close = true;
         goto defer;
@@ -664,7 +650,7 @@ int main(void) {
       // TODO: Validate Version or change format to
       // Proto, ProtoMayor, ProtoMinor
       if (request.version.count == 0) {
-        log_error("missing HTTP version");
+        z_log(LOG_ERROR, "missing HTTP version");
         respond_400(client_fd, sv_from_cstr("HTTP/1.0"));
         should_close = true;
         goto defer;
@@ -699,7 +685,7 @@ int main(void) {
       // with 400 Bad Request. Golang for reference http/transfer.go:748:0
       if (sv_eq(request.version, sv_from_cstr("HTTP/1.1"))) {
         if (!request.host.data || request.host.count == 0) {
-          log_error("HTTP/1.1 request missing Host header");
+          z_log(LOG_ERROR, "HTTP/1.1 request missing Host header");
           respond_400(client_fd, request.version);
           should_close = true;
           goto defer;
@@ -719,7 +705,7 @@ int main(void) {
             upsert(&request.headers_map, sv_from_cstr("content-length"));
         // A valid Content-Length is required on all HTTP/1.0 POST requests.
         if (!cl_sv->data) {
-          log_error("Missing Content-Length or Body");
+          z_log(LOG_ERROR, "Missing Content-Length or Body");
           respond_400(client_fd, request.version);
           should_close = true;
           goto defer;
@@ -727,7 +713,7 @@ int main(void) {
 
         if (!sv_to_i64(*cl_sv, &request.content_len) ||
             request.content_len > (int64_t)MAX_CONTENT_LEN) {
-          log_error("Invalid number or too big");
+          z_log(LOG_ERROR, "Invalid number or too big");
           respond_400(client_fd, request.version);
           should_close = true;
           goto defer;
@@ -772,7 +758,7 @@ int main(void) {
 
             ssize_t n = recv(client_fd, tmp, (int)to_read, 0);
             if (n <= 0) {
-              log_error("error or client close while reading body");
+              z_log(LOG_ERROR, "error or client close while reading body");
               should_close = true;
               goto defer;
             }
@@ -781,7 +767,8 @@ int main(void) {
           }
 
           if ((int64_t)request.body.count != request.content_len) {
-            log_error("Client closed connection before sending full body");
+            z_log(LOG_ERROR,
+                  "Client closed connection before sending full body");
             respond_400(client_fd, request.version);
             should_close = true;
             goto defer;
@@ -803,7 +790,8 @@ int main(void) {
           sv_eq(request.method, sv_from_cstr("HEAD"))) {
         if (sv_eq(request.request_uri, sv_from_cstr("/"))) {
           send_response(client_fd, request.version, 200, "OK", "text/plain",
-                        sv_from_cstr("Hello, world! From Home\n"), should_close);
+                        sv_from_cstr("Hello, world! From Home\n"),
+                        should_close);
           goto defer;
         }
 
