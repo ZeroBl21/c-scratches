@@ -571,7 +571,7 @@ int main(void) {
   int listener = setup_server_socket(NULL, PORT, 10);
 
   if (listener < 0) {
-    z_log(LOG_ERROR, "error getting listening socket");
+    z_log(LOG_ERROR, "Failed to set up listening socket on port %s", PORT);
     return -1;
   }
 
@@ -627,6 +627,7 @@ int main(void) {
       z_log(LOG_DEBUG, "Received %zu bytes from client %d (capacity %zu)",
             sb_recv.count, client_fd, sb_recv.capacity);
 
+
       String_View request_data = sb_to_sv(sb_recv);
 
       String_View request_line = sv_chop_by_delim(&request_data, '\n');
@@ -647,7 +648,7 @@ int main(void) {
       }
 
       if (request.request_uri.count == 0) {
-        z_log(LOG_ERROR, "missing request_uri/path");
+        z_log(LOG_ERROR, "Missing request URI in request");
         respond_400(client_fd, sv_from_cstr("HTTP/1.0"));
         should_close = true;
         goto defer;
@@ -656,11 +657,15 @@ int main(void) {
       // TODO: Validate Version or change format to
       // Proto, ProtoMayor, ProtoMinor
       if (request.version.count == 0) {
-        z_log(LOG_ERROR, "missing HTTP version");
+        z_log(LOG_ERROR, "Missing HTTP version in request");
         respond_400(client_fd, sv_from_cstr("HTTP/1.0"));
         should_close = true;
         goto defer;
       }
+
+      z_log(LOG_INFO, "Parsed request line: %.*s %.*s %.*s",
+            SV_Arg(request.method), SV_Arg(request.request_uri),
+            SV_Arg(request.version));
 
       if (!http_parse_headers(&request, &sb_headers, &request_data)) {
         should_close = true;
@@ -726,8 +731,8 @@ int main(void) {
           goto defer;
         }
 
-        printf("Content-Length = %lu\n", request.content_len);
-        printf("sv count = %lu\n", request_data.count);
+        z_log(LOG_DEBUG, "Content-Length = %lld", request.content_len);
+        z_log(LOG_DEBUG, "Actual body count = %lu", request_data.count);
 
         // Check for "Expect: 100-continue"
         String_View *expect =
@@ -781,7 +786,8 @@ int main(void) {
 
           if ((int64_t)request.body.count != request.content_len) {
             z_log(LOG_ERROR,
-                  "Client closed connection before sending full body");
+                  "Client %d closed connection before sending full body",
+                  client_fd);
             respond_400(client_fd, request.version);
             should_close = true;
             goto defer;
@@ -813,9 +819,13 @@ int main(void) {
         sb_append_null(&full_path);
 
         if (!read_entire_file(full_path.items, &file)) {
+          z_log(LOG_ERROR, "Could not open file %s: %s", full_path.items,
+                strerror(errno));
           respond_404(client_fd, request.version);
           goto defer;
         }
+
+        z_log(LOG_DEBUG, "Read file %s (%zd bytes)", full_path, file.count);
 
         // TODO: Make a extensions table
         const char *filetype = "text/plain";
@@ -851,7 +861,7 @@ int main(void) {
       }
     }
 
-    printf("Closing Connection\n");
+    z_log(LOG_DEBUG, "Closed connection with client %d", client_fd);
 
     // TODO: Free Headers Map
     sb_free(request.headers);
