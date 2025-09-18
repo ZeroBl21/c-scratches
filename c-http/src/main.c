@@ -589,11 +589,8 @@ int main(void) {
       return 1;
     }
 
-    String_Builder sb_recv = {0};
-    da_reserve(&sb_recv, MB(4));
-
-    String_Builder sb_headers = {0};
-    da_reserve(&sb_headers, MAX_HEADERS_TOTAL);
+    String_Builder sb_request_buffer = {0};
+    da_reserve(&sb_request_buffer, MB(4));
 
     HTTP_Request request = {0};
 
@@ -603,8 +600,8 @@ int main(void) {
     for (bool should_close = false; !should_close;) {
 
       for (;;) {
-        ssize_t n = recv(client_fd, sb_recv.items + sb_recv.count,
-                         sb_recv.capacity - sb_recv.count, 0);
+        ssize_t n = recv(client_fd, sb_request_buffer.items + sb_request_buffer.count,
+                         sb_request_buffer.capacity - sb_request_buffer.count, 0);
         if (n == 0) {
           z_log(LOG_WARN, "Client %d closed connection while reading body",
                 client_fd);
@@ -616,19 +613,19 @@ int main(void) {
           should_close = true;
           goto defer;
         }
-        sb_recv.count += (size_t)n;
+        sb_request_buffer.count += (size_t)n;
 
-        String_View sv_full = sb_to_sv(sb_recv);
+        String_View sv_full = sb_to_sv(sb_request_buffer);
         if (find_double_crlf(&sv_full) >= 0)
           break; // completed headers
       }
 
       printf("--------------------------------------\n");
       z_log(LOG_DEBUG, "Received %zu bytes from client %d (capacity %zu)",
-            sb_recv.count, client_fd, sb_recv.capacity);
+            sb_request_buffer.count, client_fd, sb_request_buffer.capacity);
 
 
-      String_View request_data = sb_to_sv(sb_recv);
+      String_View request_data = sb_to_sv(sb_request_buffer);
 
       String_View request_line = sv_chop_by_delim(&request_data, '\n');
 
@@ -667,7 +664,7 @@ int main(void) {
             SV_Arg(request.method), SV_Arg(request.request_uri),
             SV_Arg(request.version));
 
-      if (!http_parse_headers(&request, &sb_headers, &request_data)) {
+      if (!http_parse_headers(&request, &sb_request_buffer, &request_data)) {
         should_close = true;
         goto defer;
       }
@@ -851,8 +848,7 @@ int main(void) {
       request.body.count = 0;
       hashmap_reset(request.headers_map);
 
-      sb_recv.count = 0;
-      sb_headers.count = 0;
+      sb_request_buffer.count = 0;
       full_path.count = 0;
       file.count = 0;
 
@@ -867,8 +863,7 @@ int main(void) {
     sb_free(request.headers);
     sb_free(request.body);
 
-    sb_free(sb_recv);
-    sb_free(sb_headers);
+    sb_free(sb_request_buffer);
     sb_free(full_path);
     sb_free(file);
     close(client_fd);
