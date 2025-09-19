@@ -567,6 +567,53 @@ void hashmap_reset(Hashmap *m) {
   }
 }
 
+bool is_token_char(unsigned char c) {
+  if (c >= '0' && c <= '9')
+    return true;
+  if (c >= 'A' && c <= 'Z')
+    return true;
+  if (c >= 'a' && c <= 'z')
+    return true;
+
+  if (c <= 31 || c == 127)
+    return false; // CTLs
+
+  switch (c) {
+  case '!':
+  case '#':
+  case '$':
+  case '%':
+  case '&':
+  case '\'':
+  case '*':
+  case '^':
+  case '+':
+  case '-':
+  case '.':
+  case '_':
+  case '`':
+  case '|':
+  case '~':
+    return true;
+  default:
+    return false;
+  }
+}
+
+bool valid_method(String_View method) {
+  if (method.count == 0) {
+    return false;
+  }
+
+  for (size_t i = 0; i < method.count; i++) {
+    if (!is_token_char((unsigned char)method.data[i])) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
 int main(void) {
   int listener = setup_server_socket(NULL, PORT, 10);
 
@@ -600,8 +647,9 @@ int main(void) {
     for (bool should_close = false; !should_close;) {
 
       for (;;) {
-        ssize_t n = recv(client_fd, sb_request_buffer.items + sb_request_buffer.count,
-                         sb_request_buffer.capacity - sb_request_buffer.count, 0);
+        ssize_t n =
+            recv(client_fd, sb_request_buffer.items + sb_request_buffer.count,
+                 sb_request_buffer.capacity - sb_request_buffer.count, 0);
         if (n == 0) {
           z_log(LOG_WARN, "Client %d closed connection while reading body",
                 client_fd);
@@ -624,7 +672,6 @@ int main(void) {
       z_log(LOG_DEBUG, "Received %zu bytes from client %d (capacity %zu)",
             sb_request_buffer.count, client_fd, sb_request_buffer.capacity);
 
-
       String_View request_data = sb_to_sv(sb_request_buffer);
 
       String_View request_line = sv_chop_by_delim(&request_data, '\n');
@@ -636,14 +683,14 @@ int main(void) {
         goto defer;
       }
 
-      // TODO: Validate Method
-      if (request.method.count == 0) {
-        z_log(LOG_ERROR, "missing method");
+      if (!valid_method(request.method)) {
+        z_log(LOG_ERROR, "missing or invalid method");
         respond_400(client_fd, sv_from_cstr("HTTP/1.0"));
         should_close = true;
         goto defer;
       }
 
+      // TODO: Validate URI maybe create a type URL
       if (request.request_uri.count == 0) {
         z_log(LOG_ERROR, "Missing request URI in request");
         respond_400(client_fd, sv_from_cstr("HTTP/1.0"));
