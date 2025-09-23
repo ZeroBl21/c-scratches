@@ -1,9 +1,12 @@
 #include <ctype.h>
+#include <errno.h>
 #include <stdarg.h>
-#include <stdio.h>
 #include <stdbool.h>
+#include <stdio.h>
 
 #include "sv.h"
+
+// ---------- String Builder ----------
 
 int sb_appendf(String_Builder *sb, const char *fmt, ...) {
   va_list args;
@@ -27,6 +30,90 @@ int sb_appendf(String_Builder *sb, const char *fmt, ...) {
   return n;
 }
 
+void sb_path_clean(String_Builder *sb, String_View path) {
+  sb->count = 0;
+
+  if (path.count == 0) {
+    sb_append_cstr(sb, ".");
+    return;
+  }
+
+  bool rooted = (path.data[0] == '/');
+  size_t read_idx = 0;
+
+  if (rooted) {
+    da_append(sb, '/');
+    read_idx = 1;
+  }
+
+  while (read_idx < path.count) {
+    if (path.data[read_idx] == '/') {
+      read_idx++; // ignore repeated slashes
+    } else if (path.data[read_idx] == '.' &&
+               (read_idx + 1 == path.count || path.data[read_idx + 1] == '/')) {
+      read_idx++; // ignore "."
+    } else if (path.data[read_idx] == '.' && read_idx + 1 < path.count &&
+               path.data[read_idx + 1] == '.' &&
+               (read_idx + 2 == path.count || path.data[read_idx + 2] == '/')) {
+      read_idx += 2;
+      if (sb->count > 1) {
+        // backtrack to the previous '/'
+        sb->count--;
+        while (sb->count > 0 && sb->items[sb->count - 1] != '/') {
+          sb->count--;
+        }
+      } else if (!rooted) {
+        // cannot backtrack, append ".."
+        if (sb->count > 0 && sb->items[sb->count - 1] != '/') {
+          da_append(sb, '/');
+        }
+        sb_append_cstr(sb, "..");
+      }
+    } else {
+      // normal path segment
+      if (sb->count > 0 && sb->items[sb->count - 1] != '/') {
+        da_append(sb, '/');
+      }
+      while (read_idx < path.count && path.data[read_idx] != '/') {
+        da_append(sb, path.data[read_idx]);
+        read_idx++;
+      }
+    }
+  }
+
+  if (sb->count == 0) {
+    da_append_many(sb, ".", 1);
+  }
+}
+
+void sb_path_clean_absolute(String_Builder *sb, String_View path) {
+  if (path.count == 0) {
+    sb->count = 0;
+    sb_append_cstr(sb, "/");
+    return;
+  }
+
+  String_Builder tmp = {0};
+  if (path.data[0] != '/') {
+    sb_append_cstr(sb, "/");
+  }
+  da_append_many(&tmp, path.data, path.count);
+
+  sb_path_clean(sb, sb_to_sv(tmp));
+
+  // Restore '/' at the end
+  if (path.data[path.count - 1] == '/' &&
+      !(sb->count == 1 && sb->items[0] == '/')) {
+    if (!(path.count == sb->count + 1 && sv_eq(path, sb_to_sv(*sb)))) {
+      da_append(sb, '/');
+    }
+  }
+
+  sb_free(tmp);
+}
+
+// ---------- String View creation ----------
+
 String_View sv_from_parts(const char *data, size_t count) {
   String_View sv;
   sv.data = data;
@@ -37,6 +124,8 @@ String_View sv_from_parts(const char *data, size_t count) {
 String_View sv_from_cstr(const char *cstr) {
   return sv_from_parts(cstr, strlen(cstr));
 }
+
+// ---------- String View manipulation ----------
 
 String_View sv_chop_left(String_View *sv, size_t n) {
   if (n > sv->count) {
@@ -70,14 +159,6 @@ String_View sv_chop_by_delim(String_View *sv, char delim) {
   return result;
 }
 
-bool sv_eq(String_View a, String_View b) {
-    if (a.count != b.count) {
-        return false;
-    } else {
-        return memcmp(a.data, b.data, a.count) == 0;
-    }
-}
-
 String_View sv_trim_left(String_View sv) {
   size_t i = 0;
   while (i < sv.count && isspace(sv.data[i])) {
@@ -96,9 +177,7 @@ String_View sv_trim_right(String_View sv) {
   return sv_from_parts(sv.data, sv.count - i);
 }
 
-String_View sv_trim(String_View sv) {
-  return sv_trim_right(sv_trim_left(sv));
-}
+String_View sv_trim(String_View sv) { return sv_trim_right(sv_trim_left(sv)); }
 
 String_View sv_substr(const String_View *sv, size_t start, size_t len) {
   if (start > sv->count)
@@ -111,6 +190,125 @@ String_View sv_substr(const String_View *sv, size_t start, size_t len) {
   sub.count = len;
   return sub;
 }
+
+String_View sv_to_lower_sb(String_Builder *sb, String_View sv) {
+  da_reserve(sb, sb->count + sv.count);
+  char *dest = sb->items + sb->count;
+
+  for (size_t i = 0; i < sv.count; i++) {
+    dest[i] = (char)tolower((unsigned char)sv.data[i]);
+  }
+
+  sb->count += sv.count;
+
+  return sv_from_parts(dest, sv.count);
+}
+
+String_View sv_to_upper_sb(String_View sv, String_Builder *sb) {
+  da_reserve(sb, sb->count + sv.count);
+  char *dest = sb->items + sb->count;
+
+  for (size_t i = 0; i < sv.count; i++) {
+    dest[i] = (char)toupper((unsigned char)sv.data[i]);
+  }
+
+  sb->count += sv.count;
+
+  return sv_from_parts(dest, sv.count);
+}
+
+// ---------- String View comparison ----------
+
+bool sv_eq(String_View a, String_View b) {
+  if (a.count != b.count) {
+    return false;
+  } else {
+    return memcmp(a.data, b.data, a.count) == 0;
+  }
+}
+
+bool sv_end_with(String_View sv, const char *cstr) {
+  size_t cstr_count = strlen(cstr);
+  if (sv.count >= cstr_count) {
+    size_t ending_start = sv.count - cstr_count;
+    String_View sv_ending = sv_from_parts(sv.data + ending_start, cstr_count);
+    return sv_eq(sv_ending, sv_from_cstr(cstr));
+  }
+  return false;
+}
+
+bool sv_starts_with(String_View sv, String_View expected_prefix) {
+  if (expected_prefix.count <= sv.count) {
+    String_View actual_prefix = sv_from_parts(sv.data, expected_prefix.count);
+    return sv_eq(expected_prefix, actual_prefix);
+  }
+
+  return false;
+}
+
+// ---------- Numeric conversion ----------
+
+// Converts a String_View to int64_t (base 10).
+// Returns true if valid, false on error (invalid character, overflow, or
+// underflow).
+bool sv_to_i64(String_View sv, int64_t *out) {
+  if (sv.count == 0)
+    return false;
+
+  size_t i = 0;
+  bool negative = false;
+
+  if (sv.data[0] == '-') {
+    negative = true;
+    i++;
+  } else if (sv.data[0] == '+') {
+    i++;
+  }
+
+  if (i == sv.count)
+    return false; // only a sign, no digits
+
+  uint64_t result = 0;
+  for (; i < sv.count; i++) {
+    char c = sv.data[i];
+    if (c < '0' || c > '9') {
+      return false; // not a decimal digit
+    }
+    uint64_t digit = (uint64_t)(c - '0');
+
+    // Overflow check: result * 10 + digit > UINT64_MAX
+    if (result > (UINT64_MAX - digit) / 10) {
+      errno = ERANGE;
+      return false;
+    }
+    result = result * 10 + digit;
+  }
+
+  if (negative) {
+    if (result > (uint64_t)INT64_MAX + 1)
+      return false;
+    *out = -(int64_t)result;
+  } else {
+    if (result > INT64_MAX)
+      return false;
+    *out = (int64_t)result;
+  }
+
+  return true;
+}
+
+// Helper for int32_t
+bool sv_to_i32(String_View sv, int32_t *out) {
+  int64_t tmp;
+  if (!sv_to_i64(sv, &tmp))
+    return false;
+  if (tmp < INT32_MIN || tmp > INT32_MAX)
+    return false;
+  *out = (int32_t)tmp;
+  return true;
+}
+
+// ---------- UTF-8 ----------
 
 uint32_t utf8_decode(const char *s, size_t len, size_t *consumed) {
   if (len == 0) {

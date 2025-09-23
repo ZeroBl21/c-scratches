@@ -2,10 +2,10 @@
 #define SV_H
 
 #include <assert.h>
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdlib.h>
-#include <stdbool.h>
 #include <string.h>
 
 #ifdef __cplusplus
@@ -47,7 +47,7 @@
     (da)->count += (new_items_count);                                          \
   } while (0)
 
-// ------------------ String Builder & View ------------------
+// ------------------ String Builder & View Macros ------------------
 
 typedef struct {
   char *items;
@@ -87,17 +87,36 @@ typedef struct {
 extern "C" {
 #endif
 
+// ---------- String Builder ----------
 int sb_appendf(String_Builder *sb, const char *fmt, ...);
+void sb_path_clean(String_Builder *sb, String_View path);
+void sb_path_clean_absolute(String_Builder *sb, String_View path);
+
+// ---------- String View creation ----------
 String_View sv_from_parts(const char *data, size_t count);
 String_View sv_from_cstr(const char *cstr);
+
+// ---------- String View manipulation ----------
 String_View sv_chop_left(String_View *sv, size_t n);
 String_View sv_chop_by_delim(String_View *sv, char delim);
-bool sv_eq(String_View a, String_View b);
 String_View sv_trim_left(String_View sv);
 String_View sv_trim_right(String_View sv);
 String_View sv_trim(String_View sv);
 String_View sv_substr(const String_View *sv, size_t start, size_t len);
 
+String_View sv_to_lower_sb(String_Builder *sb, String_View sv);
+String_View sv_to_upper_sb(String_View sv, String_Builder *sb);
+
+// ---------- String View comparison ----------
+bool sv_eq(String_View a, String_View b);
+bool sv_end_with(String_View sv, const char *cstr);
+bool sv_starts_with(String_View sv, String_View expected_prefix);
+
+// ---------- Numeric conversion ----------
+bool sv_to_i64(String_View sv, int64_t *out);
+bool sv_to_i32(String_View sv, int32_t *out);
+
+// ---------- UTF-8 ----------
 uint32_t utf8_decode(const char *s, size_t len, size_t *consumed);
 size_t utf8_encode(uint32_t cp, char out[4]);
 size_t utf8_len(const char *data, size_t nbytes);
