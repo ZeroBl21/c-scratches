@@ -105,7 +105,7 @@ String_View sv_trim(String_View sv);
 String_View sv_substr(const String_View *sv, size_t start, size_t len);
 
 String_View sv_to_lower_sb(String_Builder *sb, String_View sv);
-String_View sv_to_upper_sb(String_View sv, String_Builder *sb);
+String_View sv_to_upper_sb(String_Builder *sb, String_View sv);
 
 // ---------- String View comparison ----------
 bool sv_eq(String_View a, String_View b);

@@ -204,7 +204,7 @@ String_View sv_to_lower_sb(String_Builder *sb, String_View sv) {
   return sv_from_parts(dest, sv.count);
 }
 
-String_View sv_to_upper_sb(String_View sv, String_Builder *sb) {
+String_View sv_to_upper_sb(String_Builder *sb, String_View sv) {
   da_reserve(sb, sb->count + sv.count);
   char *dest = sb->items + sb->count;
 
